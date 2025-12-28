@@ -10,23 +10,35 @@ body { font-family:sans-serif; display:flex; flex-direction:column; align-items:
 .stone { width:40px; height:40px; border-radius:50%; }
 .black { background:black; }
 .white { background:white; }
+button { margin:4px; }
 </style>
 </head>
 <body>
 
 <h1>安全オンラインオセロ</h1>
-<div id="roomDiv">
-部屋番号: <input id="roomInput" maxlength="4">
-<button onclick="joinRoom()">入室</button>
+
+<div>
+  <button onclick="startAIGame()">AIと対戦</button>
+  <button onclick="leaveOnline()">オンラインをやめる</button>
 </div>
+
+<div id="roomDiv">
+  部屋番号: <input id="roomInput" maxlength="4">
+  <button onclick="joinRoom()">オンライン対戦</button>
+</div>
+
 <div id="info"></div>
 <div id="board"></div>
 
+<!-- Firebase -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <script>
+/* =====================
+   Firebase
+===================== */
 const firebaseConfig = {
   apiKey: "AIzaSyCsh7nseXVBgYa8C8o2c-dvkLnwkb8F7wE",
   authDomain: "on-line-reversi-1-skriku.firebaseapp.com",
@@ -36,28 +48,36 @@ const firebaseConfig = {
   messagingSenderId: "34367295976",
   appId: "1:34367295976:web:703a1f70e4e01adf9b545d"
 };
-
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
-const auth = firebase.auth();
+firebase.auth().signInAnonymously();
 
-let uid = null;
-let myColor = null;
-let roomNumber = null;
-let board = [];
-
-auth.signInAnonymously().then(u => uid = u.user.uid);
-
+/* =====================
+   共通変数
+===================== */
 const SIZE = 8;
+let board = [];
+let mode = null;           // "ai" | "online"
+let myColor = null;        // "black" | "white"
+let currentTurn = "black";
+let roomNumber = null;
+
 const boardDiv = document.getElementById("board");
 const infoDiv = document.getElementById("info");
 
+/* =====================
+   初期盤面
+===================== */
 function initialBoard(){
   const b = Array(SIZE).fill().map(()=>Array(SIZE).fill(0));
-  b[3][3]=2; b[3][4]=1; b[4][3]=1; b[4][4]=2;
+  b[3][3]=2; b[3][4]=1;
+  b[4][3]=1; b[4][4]=2;
   return b;
 }
 
+/* =====================
+   描画
+===================== */
 function renderBoard(){
   boardDiv.innerHTML="";
   for(let r=0;r<SIZE;r++){
@@ -75,26 +95,19 @@ function renderBoard(){
   }
 }
 
+/* =====================
+   クリック処理
+===================== */
 function handleClick(r,c){
-  if(!myColor) return;
-  const myNum = myColor==="black"?1:2;
-
-  db.ref("rooms/"+roomNumber).transaction(room=>{
-    if(!room) return;
-    if(room.currentTurn!==myColor) return;
-    if(room.board[r][c]!==0) return;
-
-    const flipped = getFlipped(room.board,r,c,myNum);
-    if(flipped.length===0) return;
-
-    room.board[r][c]=myNum;
-    flipped.forEach(([x,y])=>room.board[x][y]=myNum);
-    room.currentTurn = myColor==="black"?"white":"black";
-    return room;
-  });
+  if(mode==="ai") handleAIMove(r,c);
+  if(mode==="online") handleOnlineMove(r,c);
 }
 
+/* =====================
+   裏返し判定
+===================== */
 function getFlipped(b,r,c,p){
+  if(b[r][c]!==0) return [];
   const o=p===1?2:1;
   const d=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
   let res=[];
@@ -110,7 +123,54 @@ function getFlipped(b,r,c,p){
   return res;
 }
 
+/* =====================
+   AIモード
+===================== */
+function startAIGame(){
+  mode="ai";
+  myColor="black";
+  currentTurn="black";
+  board = initialBoard();
+  infoDiv.textContent="あなたのターン（AI）";
+  renderBoard();
+}
+
+function handleAIMove(r,c){
+  if(currentTurn!=="black") return;
+  const flip=getFlipped(board,r,c,1);
+  if(!flip.length) return;
+
+  board[r][c]=1;
+  flip.forEach(([x,y])=>board[x][y]=1);
+  currentTurn="white";
+  renderBoard();
+
+  setTimeout(aiMove,500);
+}
+
+function aiMove(){
+  let moves=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    if(getFlipped(board,r,c,2).length) moves.push([r,c]);
+  }
+  if(!moves.length){
+    infoDiv.textContent="あなたの勝ち！";
+    return;
+  }
+  const [r,c]=moves[Math.floor(Math.random()*moves.length)];
+  const flip=getFlipped(board,r,c,2);
+  board[r][c]=2;
+  flip.forEach(([x,y])=>board[x][y]=2);
+  currentTurn="black";
+  renderBoard();
+  infoDiv.textContent="あなたのターン（AI）";
+}
+
+/* =====================
+   オンライン
+===================== */
 function joinRoom(){
+  mode="online";
   roomNumber=document.getElementById("roomInput").value;
   const ref=db.ref("rooms/"+roomNumber);
 
@@ -118,20 +178,30 @@ function joinRoom(){
     if(!s.exists()){
       ref.set({
         board: initialBoard(),
-        players:{black:uid,white:null},
+        players:{black:"host",white:null},
         currentTurn:"black"
       });
       myColor="black";
-    } else {
-      const p=s.val().players;
-      if(!p.white){
-        ref.child("players/white").set(uid);
-        myColor="white";
-      } else {
-        alert("満員");
-      }
+    }else{
+      myColor="white";
+      ref.child("players/white").set("guest");
     }
     listenRoom();
+  });
+}
+
+function handleOnlineMove(r,c){
+  if(currentTurn!==myColor) return;
+  const p=myColor==="black"?1:2;
+  const flip=getFlipped(board,r,c,p);
+  if(!flip.length) return;
+
+  const ref=db.ref("rooms/"+roomNumber);
+  board[r][c]=p;
+  flip.forEach(([x,y])=>board[x][y]=p);
+  ref.update({
+    board,
+    currentTurn: myColor==="black"?"white":"black"
   });
 }
 
@@ -139,24 +209,18 @@ function listenRoom(){
   db.ref("rooms/"+roomNumber).on("value",s=>{
     const d=s.val();
     if(!d) return;
-
-    board = d.board;
+    board=d.board;
+    currentTurn=d.currentTurn;
     renderBoard();
-
-    // 相手がまだいない場合
-    if(!d.players.white){
-      infoDiv.textContent = "相手の参加を待っています…";
-      return;
-    }
-
-    // 通常のターン表示
     infoDiv.textContent =
-      d.currentTurn === myColor
-        ? "あなたのターン"
-        : "相手のターン";
+      currentTurn===myColor ? "あなたのターン" : "相手のターン";
   });
 }
 
+function leaveOnline(){
+  mode=null;
+  infoDiv.textContent="モードを選択してください";
+}
 </script>
 </body>
 </html>

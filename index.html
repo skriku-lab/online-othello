@@ -139,12 +139,24 @@ function listenRoom(){
   db.ref("rooms/"+roomNumber).on("value",s=>{
     const d=s.val();
     if(!d) return;
-    board=d.board;
+
+    board = d.board;
     renderBoard();
+
+    // 相手がまだいない場合
+    if(!d.players.white){
+      infoDiv.textContent = "相手の参加を待っています…";
+      return;
+    }
+
+    // 通常のターン表示
     infoDiv.textContent =
-      d.currentTurn===myColor ? "あなたのターン" : "相手のターン";
+      d.currentTurn === myColor
+        ? "あなたのターン"
+        : "相手のターン";
   });
 }
+
 </script>
 </body>
 </html>

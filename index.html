@@ -149,22 +149,39 @@ function handleAIMove(r,c){
 }
 
 function aiMove(){
+  if(checkGameEnd()) return;
+
   let moves=[];
   for(let r=0;r<8;r++)for(let c=0;c<8;c++){
     if(getFlipped(board,r,c,2).length) moves.push([r,c]);
   }
+
+  // AIがパス
   if(!moves.length){
-    infoDiv.textContent="あなたの勝ち！";
+    infoDiv.textContent="AIはパス。あなたのターン";
+    currentTurn="black";
     return;
   }
+
   const [r,c]=moves[Math.floor(Math.random()*moves.length)];
   const flip=getFlipped(board,r,c,2);
   board[r][c]=2;
   flip.forEach(([x,y])=>board[x][y]=2);
+
   currentTurn="black";
   renderBoard();
+
+  // 人間が置けない場合もパス
+  if(!hasValidMove(board,1)){
+    infoDiv.textContent="あなたはパス。AIのターン";
+    currentTurn="white";
+    setTimeout(aiMove,500);
+    return;
+  }
+
   infoDiv.textContent="あなたのターン（AI）";
 }
+
 
 /* =====================
    オンライン
@@ -209,17 +226,67 @@ function listenRoom(){
   db.ref("rooms/"+roomNumber).on("value",s=>{
     const d=s.val();
     if(!d) return;
+
     board=d.board;
     currentTurn=d.currentTurn;
     renderBoard();
+
+    if(checkGameEnd()) return;
+
     infoDiv.textContent =
       currentTurn===myColor ? "あなたのターン" : "相手のターン";
   });
 }
 
+
 function leaveOnline(){
   mode=null;
   infoDiv.textContent="モードを選択してください";
+
+  /* =====================
+   共通：補助関数（追加）
+===================== */
+
+// 指定プレイヤーが置けるか
+function hasValidMove(b, playerNum){
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      if(getFlipped(b,r,c,playerNum).length) return true;
+    }
+  }
+  return false;
+}
+
+// 石数カウント
+function countStones(){
+  let black=0, white=0;
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      if(board[r][c]===1) black++;
+      if(board[r][c]===2) white++;
+    }
+  }
+  return {black, white};
+}
+
+// 勝敗判定
+function checkGameEnd(){
+  const blackCan = hasValidMove(board,1);
+  const whiteCan = hasValidMove(board,2);
+
+  if(blackCan || whiteCan) return false;
+
+  const {black, white} = countStones();
+  let result = `黒:${black} 白:${white}  → `;
+
+  if(black>white) result += "黒の勝ち！";
+  else if(white>black) result += "白の勝ち！";
+  else result += "引き分け！";
+
+  infoDiv.textContent = result;
+  return true;
+}
+
 }
 </script>
 </body>

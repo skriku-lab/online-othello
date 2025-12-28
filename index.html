@@ -6,31 +6,27 @@
 <style>
 body { font-family:sans-serif; display:flex; flex-direction:column; align-items:center; margin-top:20px; }
 #board { display:grid; grid-template-columns:repeat(8,50px); grid-template-rows:repeat(8,50px); gap:2px; margin-bottom:10px;}
-.cell { width:50px; height:50px; background-color:green; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:5px; position:relative; }
-.stone { width:40px; height:40px; border-radius:50%; transition: transform 0.3s; }
-.black { background-color:black; }
-.white { background-color:white; }
-#info, #coins, #roomDiv { margin-top:5px; }
+.cell { width:50px; height:50px; background-color:green; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:5px; }
+.stone { width:40px; height:40px; border-radius:50%; }
+.black { background:black; }
+.white { background:white; }
 </style>
 </head>
 <body>
 
 <h1>安全オンラインオセロ</h1>
-<div id="coins">所持コイン: 1000</div>
 <div id="roomDiv">
-  部屋番号（4桁）: <input type="text" id="roomInput" maxlength="4" style="width:60px;">
-  <button onclick="joinRoom()">入室</button>
+部屋番号: <input id="roomInput" maxlength="4">
+<button onclick="joinRoom()">入室</button>
 </div>
-<div id="board"></div>
 <div id="info"></div>
+<div id="board"></div>
 
-<!-- Firebase -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <script>
-// ==== Firebase 設定 ====
 const firebaseConfig = {
   apiKey: "AIzaSyCsh7nseXVBgYa8C8o2c-dvkLnwkb8F7wE",
   authDomain: "on-line-reversi-1-skriku.firebaseapp.com",
@@ -38,159 +34,117 @@ const firebaseConfig = {
   projectId: "on-line-reversi-1-skriku",
   storageBucket: "on-line-reversi-1-skriku.firebasestorage.app",
   messagingSenderId: "34367295976",
-  appId:  "1:34367295976:web:703a1f70e4e01adf9b545d"
+  appId: "1:34367295976:web:703a1f70e4e01adf9b545d"
 };
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const auth = firebase.auth();
-let uid = null;
 
-// 匿名ログイン
-auth.signInAnonymously()
-  .then(user => { uid = user.user.uid; })
-  .catch(err => alert(err.message));
+let uid = null;
+let myColor = null;
+let roomNumber = null;
+let board = [];
+
+auth.signInAnonymously().then(u => uid = u.user.uid);
 
 const SIZE = 8;
-let board = [];
-let currentPlayer = 1; // 1=自分(黒) 2=相手(白)
-let coins = parseInt(localStorage.getItem('coins')) || 1000;
-let roomNumber = null;
+const boardDiv = document.getElementById("board");
+const infoDiv = document.getElementById("info");
 
-const boardDiv = document.getElementById('board');
-const infoDiv = document.getElementById('info');
-const coinsDiv = document.getElementById('coins');
-
-// 初期ボード
-function initBoard(){
-  board = Array(SIZE).fill().map(()=>Array(SIZE).fill(0));
-  board[3][3]=2; board[3][4]=1; board[4][3]=1; board[4][4]=2;
-  renderBoard();
-  updateInfo();
-  updateCoins();
+function initialBoard(){
+  const b = Array(SIZE).fill().map(()=>Array(SIZE).fill(0));
+  b[3][3]=2; b[3][4]=1; b[4][3]=1; b[4][4]=2;
+  return b;
 }
 
-// ボード描画
 function renderBoard(){
-  boardDiv.innerHTML='';
-  for(let i=0;i<SIZE;i++){
-    for(let j=0;j<SIZE;j++){
-      const cell = document.createElement('div');
-      cell.classList.add('cell');
-      cell.dataset.row=i;
-      cell.dataset.col=j;
-      cell.addEventListener('click', handleClick);
-      if(board[i][j]!==0){
-        const stone = document.createElement('div');
-        stone.classList.add('stone');
-        stone.classList.add(board[i][j]===1?'black':'white');
-        cell.appendChild(stone);
+  boardDiv.innerHTML="";
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      const cell=document.createElement("div");
+      cell.className="cell";
+      cell.onclick=()=>handleClick(r,c);
+      if(board[r][c]){
+        const s=document.createElement("div");
+        s.className="stone "+(board[r][c]===1?"black":"white");
+        cell.appendChild(s);
       }
       boardDiv.appendChild(cell);
     }
   }
 }
 
-// 石を置く処理
-function handleClick(e) {
-  if (currentPlayer !== 1) return; // 自分のターンじゃない
-  const row = parseInt(e.currentTarget.dataset.row);
-  const col = parseInt(e.currentTarget.dataset.col);
-  if (board[row][col] !== 0) return;
+function handleClick(r,c){
+  if(!myColor) return;
+  const myNum = myColor==="black"?1:2;
 
-  const flipped = getFlippedStones(row,col,currentPlayer);
-  if(flipped.length===0) return;
+  db.ref("rooms/"+roomNumber).transaction(room=>{
+    if(!room) return;
+    if(room.currentTurn!==myColor) return;
+    if(room.board[r][c]!==0) return;
 
-  placeStone(row,col,currentPlayer,flipped);
+    const flipped = getFlipped(room.board,r,c,myNum);
+    if(flipped.length===0) return;
 
-  // DBに更新
-  const roomRef = db.ref('rooms/' + roomNumber);
-  roomRef.transaction(room => {
-    if(!room) return room;
-    if(room.currentPlayerUid !== uid) return;
-    room.board = board;
-    room.currentPlayer = 2;
-    room.currentPlayerUid = room.players.find(p=>p!==uid);
+    room.board[r][c]=myNum;
+    flipped.forEach(([x,y])=>room.board[x][y]=myNum);
+    room.currentTurn = myColor==="black"?"white":"black";
     return room;
   });
 }
 
-// 石を置き、裏返す
-function placeStone(row,col,player,flipped){
-  board[row][col] = player;
-  flipped.forEach(([r,c])=>board[r][c]=player);
-}
-
-// 裏返す石を取得
-function getFlippedStones(row,col,player){
-  const opponent = player===1?2:1;
-  const directions=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-  let flipped=[];
-  for(const [dr,dc] of directions){
-    let r=row+dr, c=col+dc, line=[];
-    while(r>=0 && r<SIZE && c>=0 && c<SIZE){
-      if(board[r][c]===opponent) line.push([r,c]);
-      else if(board[r][c]===player){ flipped = flipped.concat(line); break; }
+function getFlipped(b,r,c,p){
+  const o=p===1?2:1;
+  const d=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  let res=[];
+  for(const [dr,dc] of d){
+    let x=r+dr,y=c+dc,tmp=[];
+    while(x>=0&&x<8&&y>=0&&y<8){
+      if(b[x][y]===o) tmp.push([x,y]);
+      else if(b[x][y]===p){ res=res.concat(tmp); break; }
       else break;
-      r+=dr; c+=dc;
+      x+=dr;y+=dc;
     }
   }
-  return flipped;
+  return res;
 }
 
-// 情報更新
-function updateInfo(){ infoDiv.textContent=`${currentPlayer===1?'あなた(黒)':'相手(白)'}のターン`; }
-function updateCoins(){ coinsDiv.textContent=`所持コイン: ${coins}`; }
+function joinRoom(){
+  roomNumber=document.getElementById("roomInput").value;
+  const ref=db.ref("rooms/"+roomNumber);
 
-// ルーム参加
-function joinRoom() {
-  roomNumber = document.getElementById('roomInput').value;
-  if(!roomNumber || roomNumber.length!==4){ 
-    alert('4桁の数字を入力'); 
-    return; 
-  }
-
-  const roomRef = db.ref('rooms/' + roomNumber);
-  roomRef.once('value').then(snapshot=>{
-    if(!snapshot.exists()){
-      // 新規ルーム（初期石をセット）
-      const initialBoard = Array(SIZE).fill().map(()=>Array(SIZE).fill(0));
-      initialBoard[3][3] = 2; 
-      initialBoard[3][4] = 1;
-      initialBoard[4][3] = 1; 
-      initialBoard[4][4] = 2;
-
-      roomRef.set({
-        board: initialBoard,
-        currentPlayer: 1,
-        currentPlayerUid: uid,
-        players: [uid]
+  ref.once("value").then(s=>{
+    if(!s.exists()){
+      ref.set({
+        board: initialBoard(),
+        players:{black:uid,white:null},
+        currentTurn:"black"
       });
+      myColor="black";
     } else {
-      // 既存ルームに参加
-      roomRef.child('players').once('value').then(snap=>{
-        const players = snap.val();
-        if(!players.includes(uid)){
-          roomRef.child('players').set([...players,uid]);
-        }
-      });
+      const p=s.val().players;
+      if(!p.white){
+        ref.child("players/white").set(uid);
+        myColor="white";
+      } else {
+        alert("満員");
+      }
     }
     listenRoom();
   });
 }
 
-// ルーム監視
 function listenRoom(){
-  db.ref('rooms/' + roomNumber).on('value', snapshot=>{
-    const data = snapshot.val();
-    if(!data) return;
-    board = data.board;
-    currentPlayer = (data.currentPlayerUid === uid) ? 1 : 2;
+  db.ref("rooms/"+roomNumber).on("value",s=>{
+    const d=s.val();
+    if(!d) return;
+    board=d.board;
     renderBoard();
-    updateInfo();
+    infoDiv.textContent =
+      d.currentTurn===myColor ? "あなたのターン" : "相手のターン";
   });
 }
-
-initBoard();
 </script>
 </body>
 </html>
